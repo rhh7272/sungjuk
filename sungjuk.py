@@ -3,6 +3,7 @@ import streamlit as st
 import pandas as pd
 import sqlite3
 import os
+import streamlit.components.v1 as components
 
 DB_DIR = r'.\db'
 DB_FILE = os.path.join(DB_DIR, 'MembersDB.db')
@@ -37,6 +38,22 @@ def get_grade(average):
         return 'D'
     else:
         return 'F'
+
+def set_focus(label):
+    """지정된 라벨(aria-label)을 가진 입력창으로 커서를 자동 이동시키는 기능"""
+    components.html(
+        f"""
+        <script>
+            setTimeout(function() {{
+                var inputs = window.parent.document.querySelectorAll('input[aria-label="{label}"]');
+                if (inputs.length > 0) {{
+                    inputs[0].focus();
+                }}
+            }}, 100);
+        </script>
+        """,
+        height=0
+    )
 
 def main():
     st.title("📝 성적 처리 프로그램")
@@ -95,31 +112,52 @@ def main():
                     
             submitted = st.form_submit_button("등록 완료")
 
+        # 등록 모드일 때 첫 번째 이름 입력칸으로 포커스 이동
+        set_focus("이름_0")
+
         if submitted:
-            added_count = 0
             conn = sqlite3.connect(DB_FILE, timeout=15)
             try:
                 c = conn.cursor()
+                
+                # 1. 폼에 입력된 이름 추출 및 입력칸 자체 중복 검사
+                input_names = []
                 for i in range(st.session_state.input_rows):
                     s_name = st.session_state[f"name_{i}"].strip()
                     if s_name:
-                        kor = st.session_state[f"kor_{i}"]
-                        eng = st.session_state[f"eng_{i}"]
-                        math = st.session_state[f"math_{i}"]
+                        input_names.append(s_name)
                         
-                        c.execute('''
-                            REPLACE INTO jumsu (name, kor, eng, math) 
-                            VALUES (?, ?, ?, ?)
-                        ''', (s_name, kor, eng, math))
-                        added_count += 1
-                conn.commit()
+                if not input_names:
+                    st.warning("학생 이름을 하나 이상 입력해주세요.")
+                elif len(input_names) != len(set(input_names)):
+                    st.error("입력하신 이름 중 중복된 이름이 있습니다. 중복 없이 입력해 주세요.")
+                else:
+                    # 2. DB에 이미 존재하는 이름인지 사전 검사
+                    placeholders = ','.join('?' for _ in input_names)
+                    c.execute(f"SELECT name FROM jumsu WHERE name IN ({placeholders})", input_names)
+                    existing_names = [row[0] for row in c.fetchall()]
+                    
+                    if existing_names:
+                        st.error(f"이미 성적 등록이 완료된 학생이 포함되어 있습니다: {', '.join(existing_names)} (전체 등록 취소)")
+                    else:
+                        # 3. 중복이 전혀 없을 때만 전체 데이터 INSERT
+                        added_count = 0
+                        for i in range(st.session_state.input_rows):
+                            s_name = st.session_state[f"name_{i}"].strip()
+                            if s_name:
+                                kor = st.session_state[f"kor_{i}"]
+                                eng = st.session_state[f"eng_{i}"]
+                                math = st.session_state[f"math_{i}"]
+                                
+                                c.execute('''
+                                    INSERT INTO jumsu (name, kor, eng, math) 
+                                    VALUES (?, ?, ?, ?)
+                                ''', (s_name, kor, eng, math))
+                                added_count += 1
+                        conn.commit()
+                        st.success(f"{added_count}명의 학생 성적이 성공적으로 등록되었습니다.")
             finally:
                 conn.close()
-                    
-            if added_count > 0:
-                st.success(f"{added_count}명의 학생 성적이 등록되었습니다.")
-            else:
-                st.warning("학생 이름을 하나 이상 입력해주세요.")
 
     # ----------------------------------------
     # 2. 수정 모드 (기존 데이터 업데이트)
@@ -131,7 +169,7 @@ def main():
             df_names = pd.read_sql_query("SELECT name FROM jumsu", conn)
             
             if df_names.empty:
-                st.info("등록된 데이터가 없습니다. 먼저 성적을 등록해주세요.")
+                st.info("등록된 데이터가 없습니다. 먼저 학생 성적을 등록해주세요.")
             else:
                 student_list = df_names['name'].tolist()
                 target_name = st.selectbox("수정할 학생 이름 선택", student_list)
@@ -163,7 +201,7 @@ def main():
             df_names = pd.read_sql_query("SELECT name FROM jumsu", conn)
             
             if df_names.empty:
-                st.info("등록된 데이터가 없습니다. 먼저 성적을 등록해주세요.")
+                st.warning("삭제할 학생 성적이 없습니다.")
             else:
                 student_list = df_names['name'].tolist()
                 target_name = st.selectbox("삭제할 학생 이름 선택", student_list)
@@ -184,6 +222,9 @@ def main():
         st.header("4. 성적 조회")
         
         search_keyword = st.text_input("🔍 이름으로 검색 (전체 조회 시 비워두세요)")
+        
+        # 조회 모드일 때 검색어 입력칸으로 포커스 이동
+        set_focus("🔍 이름으로 검색 (전체 조회 시 비워두세요)")
         
         conn = sqlite3.connect(DB_FILE, timeout=15)
         try:
